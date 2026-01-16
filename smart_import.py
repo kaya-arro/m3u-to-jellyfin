@@ -7,6 +7,7 @@ import sys
 import time
 import difflib
 import json
+import argparse
 from pathlib import Path
 
 # ================= CONFIGURATION =================
@@ -17,6 +18,16 @@ M3U_FOLDER = ""
 FUZZY_THRESHOLD = 0.85 # 85% similarity required
 CACHE_PATH = Path("cache.json")
 # =================================================
+
+parser = argparse.ArgumentParser()
+parser.add_argument('-u', '--url', default=JELLYFIN_URL, type=str)
+parser.add_argument('-k', '--api-key', default=API_KEY, type=str)
+parser.add_argument('-i', '--user-id', default=USER_ID, type=str)
+parser.add_argument('-t', '--threshold', default=FUZZY_THRESHOLD, type=float)
+parser.add_argument('-f', '--m3u-folder', default=M3U_FOLDER, type=str)
+
+args = parser.parse_args()
+[JELLYFIN_URL, API_KEY, USER_ID, FUZZY_THRESHOLD, M3U_FOLDER] = list(vars(args).values())
 
 session = requests.Session()
 session.headers.update({"X-Emby-Token": API_KEY, "Content-Type": "application/json"})
@@ -153,7 +164,12 @@ def get_or_create_playlist(name):
     except: pass
 
     r = session.post(f"{JELLYFIN_URL}/Playlists", params={"Name": name, "UserId": USER_ID})
-    return r.json()["Id"], False
+    try:
+        return r.json()["Id"], False
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        print("\nServer response:\n\n", json.dumps(r.json(), indent=4))
+        sys.exit(1)
 
 def get_playlist_items(pid):
     try:

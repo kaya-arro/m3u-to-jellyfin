@@ -8,6 +8,7 @@ import time
 import difflib
 import json
 import argparse
+from pathlib import Path
 
 # ================= CONFIGURATION =================
 JELLYFIN_URL = "http://localhost:8096"
@@ -15,6 +16,7 @@ API_KEY = ""
 USER_ID = ""
 M3U_FOLDER = ""
 FUZZY_THRESHOLD = 0.85 # 85% similarity required
+CACHE_PATH = Path("cache.json")
 # =================================================
 
 parser = argparse.ArgumentParser()
@@ -37,10 +39,14 @@ def clean_text(text):
     2. Removes brackets [] and parentheses () content
     3. Removes junk words
     4. Removes leading 'the'
-    5. Returns only alphanumeric characters
+    5. Removes leading track number
+    6. Returns only alphanumeric characters
     """
     if not text: return ""
     text = urllib.parse.unquote(text).lower()
+
+    # Remove leading track number
+    text = re.sub(r'^[0-9\-\.]*', "", text)
 
     # Remove youtube brackets [id]
     text = re.sub(r'\[.*?\]', '', text)
@@ -70,7 +76,11 @@ def fetch_library_index():
 
     try:
         r = session.get(f"{JELLYFIN_URL}/Items", params=params)
-        items = r.json().get("Items", [])
+        resp = r.json()
+        if "errors" in resp:
+            print(f"❌ API Error: {resp.get("errors")}")
+            sys.exit(1)
+        items = resp.get("Items", [])
     except Exception as e:
         print(f"❌ API Error: {e}")
         sys.exit(1)
@@ -204,8 +214,13 @@ def process_m3us(index_map):
                 missing.append(f"{fname} [{reason}]")
 
         if to_add:
-            session.post(f"{JELLYFIN_URL}/Playlists/{pid}/Items",
-                         params={"Ids": ",".join(to_add), "UserId": USER_ID})
+            # Send items to be added 50 at a time to avoid requests that are too large
+            segments = [to_add[i:i+50] for i in range(0, len(to_add), 50)]
+            for segment in segments:
+                r = session.post(f"{JELLYFIN_URL}/Playlists/{pid}/Items",
+                             params={"Ids": ",".join(segment), "UserId": USER_ID})
+                if r.status_code != 204:
+                    print(f"❌ API Error: {r.status_code} {r.text}")
 
         if missing:
             print(f"\n📂 Playlist: {playlist_name}")
@@ -213,6 +228,12 @@ def process_m3us(index_map):
                 print(f"❌ MISSING: {m}")
 
 if __name__ == "__main__":
-    idx = fetch_library_index()
+    if CACHE_PATH.exists():
+        with open(CACHE_PATH) as f:
+            idx = json.load(f)
+    else:
+        idx = fetch_library_index()
+        with open(CACHE_PATH, 'w') as f:
+            json.dump(idx, f)
     process_m3us(idx)
     print("\n🏁 Done.")
